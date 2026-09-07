@@ -8,11 +8,19 @@ Fire + water screensavers for your terminal. Built with iocraft.
 ![water](assets/water.png)
 ![split](assets/split.png)
 
+## Install
+
+```bash
+brew install askmaddyy/tap/hotub
+```
+
 ## Run
 
 ```bash
-cargo run
+hotub
 ```
+
+Or from source: `cargo run`
 
 ## Keys
 
