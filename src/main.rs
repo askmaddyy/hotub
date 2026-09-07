@@ -562,18 +562,9 @@ fn App(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let paused_v = paused.get();
 
     let (title, title_color) = match mode_v {
-        0 => (
-            format!("EMBERFLOW - FIRE {}  tick {}", if paused_v { "[paused]" } else { "" }, tick_v),
-            Color::Rgb { r: 255, g: 140, b: 0 },
-        ),
-        1 => (
-            format!("EMBERFLOW - WATER {}  tick {}", if paused_v { "[paused]" } else { "" }, tick_v),
-            Color::Rgb { r: 64, g: 200, b: 255 },
-        ),
-        _ => (
-            format!("EMBERFLOW - FIRE + WATER {}  tick {}", if paused_v { "[paused]" } else { "" }, tick_v),
-            Color::Magenta,
-        ),
+        0 => ("HOTUB - FIRE".to_string(), Color::Rgb { r: 255, g: 140, b: 0 }),
+        1 => ("HOTUB - WATER".to_string(), Color::Rgb { r: 64, g: 200, b: 255 }),
+        _ => ("HOTUB - FIRE + WATER".to_string(), Color::Magenta),
     };
 
     let doctest_hint = "1 fire  2 water  3 split  space pause  +/- speed  q quit";
@@ -653,9 +644,9 @@ fn main() {
     if arg == "smoke" || arg == "once" {
         element! {
             View(flex_direction: FlexDirection::Column) {
-                Text(content: "--- FIRE (tick 40) ---", color: Color::Yellow, weight: Weight::Bold)
+                Text(content: "--- FIRE ---", color: Color::Yellow, weight: Weight::Bold)
                 FireView(tick: 40i32, width: 60usize, height: 18usize)
-                Text(content: "--- WATER (tick 40) ---", color: Color::Cyan, weight: Weight::Bold)
+                Text(content: "--- WATER ---", color: Color::Cyan, weight: Weight::Bold)
                 WaterView(tick: 40i32, speed: 1.0f32, width: 60usize, height: 14usize)
             }
         }
