@@ -25,7 +25,7 @@ fn clamp01(v: f32) -> f32 {
 
 // ---------- fire ----------
 
-const FIRE_CHARS: &[char] = &[' ', '.', ':', ';', '!', '*', '+', '#', '%', '@', '#'];
+const FIRE_CHARS: &[char] = &[' ', '.', ':', ';', '!', '*', '+', '#', '%', '@', '█'];
 
 fn fire_color(h: f32) -> Color {
     // black -> maroon -> red -> orange -> yellow -> white
@@ -64,8 +64,8 @@ fn fire_heat(x: i32, y: i32, w: i32, h: i32, tick: i32) -> f32 {
     let yf = y as f32;
     let wf = w as f32;
     let hf = h as f32;
-    // depth: 1 at bottom, 0 at top
-    let d = 1.0 - (yf / hf);
+    // y=0 is top, y=h-1 is bottom. Heat must be max at the bottom (logs).
+    let d = yf / hf;
     // center boost so flames lick higher in the middle
     let cx = ((xf - wf / 2.0) / (wf / 2.0).max(1.0)).abs();
     let shape = (1.0 - cx * cx * 0.55).max(0.25);
@@ -73,8 +73,8 @@ fn fire_heat(x: i32, y: i32, w: i32, h: i32, tick: i32) -> f32 {
     let fuel = 0.72
         + 0.28 * (xf * 0.32 + tick as f32 * 0.22).sin()
         + 0.12 * (xf * 0.11 - tick as f32 * 0.11).sin();
-    // rising turbulence
-    let sway = (yf * 0.28 - tick as f32 * 0.24 + (xf * 0.22 + tick as f32 * 0.06).sin() * 2.2).sin();
+    // rising turbulence: phase y*k + t*w travels upward (decreasing y)
+    let sway = (yf * 0.28 + tick as f32 * 0.24 + (xf * 0.22 + tick as f32 * 0.06).sin() * 2.2).sin();
     let grain = hash01(x, y / 2, tick / 2) - 0.5;
     let mut heat = (d.powf(1.35) * fuel + sway * 0.10 * d + grain * 0.22 * d) * shape;
     // embers / sparks shooting up
@@ -143,12 +143,56 @@ fn water_color(depth: f32, shimmer: f32) -> Color {
 }
 
 fn surface_y(x: i32, w: i32, h: i32, t: f32) -> i32 {
-    let base = h as f32 * 0.32;
+    let base = h as f32 * 0.48;
     let s = (x as f32 * 0.24 + t * 0.11).sin() * 1.3
         + (x as f32 * 0.11 - t * 0.065).sin() * 1.9
         + ((x as f32 + t * 1.4) * 0.045).sin() * 1.1
         + (w as f32 * 0.01).sin();
     (base + s).round() as i32
+}
+
+fn wrap_track(v: f32, period: i32) -> i32 {
+    let p = period.max(1) as f32;
+    (((v % p) + p) % p) as i32
+}
+
+struct Fish {
+    x: i32,
+    y: i32,
+    right: bool,
+    color: Color,
+}
+
+fn fishes(t: f32, tick: i32, w: i32, h: i32) -> Vec<Fish> {
+    // a little school: different speeds, depths, colors
+    let speeds = [1.6f32, 1.05, 2.1, 0.8, 1.35];
+    let depth_frac = [0.62f32, 0.70, 0.76, 0.66, 0.83];
+    let colors = [
+        Color::Yellow,
+        Color::Rgb { r: 255, g: 150, b: 50 },
+        Color::Rgb { r: 255, g: 120, b: 200 },
+        Color::Rgb { r: 120, g: 255, b: 170 },
+        Color::Rgb { r: 150, g: 200, b: 255 },
+    ];
+    let right = (tick / 350) % 2 == 0;
+    let span = w + 20;
+    (0..5)
+        .map(|i| {
+            let off = i as f32 * 23.0 + 5.0;
+            let p = wrap_track(t * speeds[i] + off, span) - 10;
+            let x = if right { p } else { (w + 10) - p - 3 };
+            let y = (h as f32 * depth_frac[i] + (t * 0.12 + i as f32 * 1.7).sin() * 1.4).round() as i32;
+            Fish { x, y, right, color: colors[i] }
+        })
+        .collect()
+}
+
+fn fish_glyphs(right: bool) -> [char; 3] {
+    if right {
+        ['>', '<', '>'] // "><>" swims right
+    } else {
+        ['<', '>', '<'] // "<><" swims left
+    }
 }
 
 fn water_row_contents(y: i32, w: i32, h: i32, tick: i32, speed: f32) -> Vec<MixedTextContent> {
@@ -166,25 +210,130 @@ fn water_row_contents(y: i32, w: i32, h: i32, tick: i32, speed: f32) -> Vec<Mixe
         }
         buf.push(ch);
     };
-    // fish!
-    let fish_x = ((t * 1.6) as i32 % (w + 20)) - 10;
-    let fish_y = (h as f32 * 0.62 + (t * 0.09).sin() * 2.0).round() as i32;
-    let fish_dir_right = (tick / 200) % 2 == 0;
+    let school = fishes(t, tick, w, h);
+    // sky actors
+    let sky_rows = (h * 38 / 100).max(3);
+    let sun_x = w - 10;
+    let sun_y = 1;
+    let cloud_ys = [1i32, 2, 3];
+    let cloud_speeds = [0.55f32, 0.35, 0.75];
+    let cloud_offs = [0.0f32, 31.0, 63.0];
+    let bird_y = [2i32, 4];
+    let bird_offs = [11.0f32, 47.0];
+    // boat + crab + jellies
+    let boat_span = w + 16;
+    let boat_cx = wrap_track(t * 0.9, boat_span) - 8;
+    let boat_sy = surface_y(boat_cx.clamp(0, w - 1), w, h, t).clamp(0, h - 1);
+    let crab_x = wrap_track(t * 0.6 + 13.0, boat_span) - 8;
+    let jelly = [
+        ((7i32, 17.0f32), Color::Rgb { r: 255, g: 130, b: 220 }),
+        ((29, 41.0), Color::Rgb { r: 180, g: 150, b: 255 }),
+    ];
+    let jelly_pos: Vec<(i32, i32)> = jelly
+        .iter()
+        .map(|((ox, off), _)| {
+            let jx = ((ox % w.max(1)) + w.max(1)) % w.max(1);
+            let depth_span = (h as f32 * 0.35).max(2.0);
+            let jy = h - 2 - (wrap_track(t * 0.7 + off, depth_span as i32)) - 1;
+            (jx, jy.clamp(0, h - 1))
+        })
+        .collect();
+    let flap = if (tick / 8) % 2 == 0 { 'v' } else { '^' };
     for x in 0..w {
         let sy = surface_y(x, w, h, t).clamp(0, h - 1);
         if y < sy {
-            // air: occasional spray drops near the crest
-            let near = sy - y;
-            if near <= 2 && hash01(x * 2, y * 3, (tick / 3) as i32) > 0.86 {
-                let c = if near == 1 {
-                    Color::Rgb { r: 180, g: 240, b: 255 }
+            // ---- boat sail/mast (air, just above hull) ----
+            if y == boat_sy - 2 && (x == boat_cx || x == boat_cx + 1) {
+                let ch = if x == boat_cx { '|' } else { '/' };
+                push_char(ch, Color::White, &mut buf, &mut cur, &mut out);
+                continue;
+            }
+            if y == boat_sy - 1 && x >= boat_cx - 3 && x <= boat_cx + 3 {
+                let ch = if x == boat_cx - 3 {
+                    '\\'
+                } else if x == boat_cx + 3 {
+                    '/'
                 } else {
-                    Color::Rgb { r: 110, g: 190, b: 240 }
+                    '_'
                 };
-                let ch = if hash01(x, y, tick) > 0.5 { '\'' } else { '.' };
-                push_char(ch, c, &mut buf, &mut cur, &mut out);
+                push_char(ch, Color::DarkYellow, &mut buf, &mut cur, &mut out);
+                continue;
+            }
+            // ---- sky ----
+            if y < sky_rows {
+                // sun + glow
+                if y == sun_y && x == sun_x {
+                    push_char('*', Color::Yellow, &mut buf, &mut cur, &mut out);
+                    continue;
+                }
+                if (y - sun_y).abs() <= 1 && (x - sun_x).abs() == 1 {
+                    push_char('.', Color::DarkYellow, &mut buf, &mut cur, &mut out);
+                    continue;
+                }
+                // clouds: puffy 8-wide blob per cloud row
+                let mut drew_cloud = false;
+                for (ci, cy) in cloud_ys.iter().enumerate() {
+                    if y == *cy {
+                        let ccx = wrap_track(t * cloud_speeds[ci] + cloud_offs[ci], w + 20) - 10;
+                        let dx = x - ccx;
+                        if dx >= -4 && dx <= 4 {
+                            let blob = ['.', '-', '~', '~', '~', '~', '~', '-', '.'];
+                            push_char(
+                                blob[(dx + 4) as usize],
+                                Color::White,
+                                &mut buf,
+                                &mut cur,
+                                &mut out,
+                            );
+                            drew_cloud = true;
+                            break;
+                        }
+                    }
+                }
+                if drew_cloud {
+                    continue;
+                }
+                // birds
+                for (bi, by) in bird_y.iter().enumerate() {
+                    if y == *by {
+                        let bx = wrap_track(t * 1.1 + bird_offs[bi], w + 12) - 6;
+                        if x == bx || x == bx + 2 {
+                            push_char(flap, Color::Grey, &mut buf, &mut cur, &mut out);
+                            drew_cloud = true;
+                            break;
+                        }
+                    }
+                }
+                if drew_cloud {
+                    continue;
+                }
+                // spray drops near the crest
+                let near = sy - y;
+                if near <= 2 && hash01(x * 2, y * 3, (tick / 3) as i32) > 0.86 {
+                    let c = if near == 1 {
+                        Color::Rgb { r: 180, g: 240, b: 255 }
+                    } else {
+                        Color::Rgb { r: 110, g: 190, b: 240 }
+                    };
+                    let ch = if hash01(x, y, tick) > 0.5 { '\'' } else { '.' };
+                    push_char(ch, c, &mut buf, &mut cur, &mut out);
+                } else {
+                    push_char(' ', Color::Reset, &mut buf, &mut cur, &mut out);
+                }
             } else {
-                push_char(' ', Color::Reset, &mut buf, &mut cur, &mut out);
+                // between sky and water: spray only
+                let near = sy - y;
+                if near <= 2 && hash01(x * 2, y * 3, (tick / 3) as i32) > 0.86 {
+                    let c = if near == 1 {
+                        Color::Rgb { r: 180, g: 240, b: 255 }
+                    } else {
+                        Color::Rgb { r: 110, g: 190, b: 240 }
+                    };
+                    let ch = if hash01(x, y, tick) > 0.5 { '\'' } else { '.' };
+                    push_char(ch, c, &mut buf, &mut cur, &mut out);
+                } else {
+                    push_char(' ', Color::Reset, &mut buf, &mut cur, &mut out);
+                }
             }
         } else if y == sy {
             // foam crest
@@ -206,23 +355,43 @@ fn water_row_contents(y: i32, w: i32, h: i32, tick: i32, speed: f32) -> Vec<Mixe
                 &mut out,
             );
         } else {
-            // underwater
-            if x >= fish_x - 2 && x <= fish_x + 2 && y == fish_y {
-                let offset = x - fish_x;
-                let (ch, col) = match (offset, fish_dir_right) {
-                    (-2, true) => ('<', Color::Yellow),
-                    (-1, true) => ('>', Color::Yellow),
-                    (0, true) => ('<', Color::Yellow),
-                    (1, true) => ('>', Color::Yellow),
-                    (2, true) => ('<', Color::Yellow),
-                    (-2, false) => ('>', Color::Yellow),
-                    (-1, false) => ('<', Color::Yellow),
-                    (0, false) => ('>', Color::Yellow),
-                    (1, false) => ('<', Color::Yellow),
-                    _ => ('>', Color::Yellow),
-                };
-                let _ = col;
-                push_char(ch, Color::Yellow, &mut buf, &mut cur, &mut out);
+            // ---- underwater ----
+            // fishes (school of 5)
+            let mut drew = false;
+            for f in school.iter() {
+                if y == f.y && x >= f.x && x < f.x + 3 {
+                    let g = fish_glyphs(f.right);
+                    push_char(g[(x - f.x) as usize], f.color, &mut buf, &mut cur, &mut out);
+                    drew = true;
+                    break;
+                }
+            }
+            if drew {
+                continue;
+            }
+            // jellyfish heads + tentacles
+            for (ji, (jx, jy)) in jelly_pos.iter().enumerate() {
+                let jc = jelly[ji].1;
+                if y == *jy && x >= *jx && x < *jx + 3 {
+                    let ch = ['(', '~', ')'][(x - *jx) as usize];
+                    push_char(ch, jc, &mut buf, &mut cur, &mut out);
+                    drew = true;
+                    break;
+                }
+                if y == *jy + 1 && x >= *jx && x < *jx + 3 {
+                    let ch = if (tick / 6 + x) % 2 == 0 { '.' } else { '\'' };
+                    push_char(ch, jc, &mut buf, &mut cur, &mut out);
+                    drew = true;
+                    break;
+                }
+            }
+            if drew {
+                continue;
+            }
+            // crab on the sea floor
+            if y == h - 1 && x >= crab_x && x < crab_x + 3 {
+                let ch = ['(', 'c', ')'][(x - crab_x) as usize];
+                push_char(ch, Color::Red, &mut buf, &mut cur, &mut out);
                 continue;
             }
             let depth = ((y - sy) as f32 / (h - sy).max(1) as f32).clamp(0.0, 1.0);
@@ -256,7 +425,6 @@ fn water_row_contents(y: i32, w: i32, h: i32, tick: i32, speed: f32) -> Vec<Mixe
             } else {
                 '~'
             };
-            // deep water: use background-ish dim char
             if depth > 0.7 && ch == ' ' {
                 push_char(' ', Color::Reset, &mut buf, &mut cur, &mut out);
             } else {
