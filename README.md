@@ -2,6 +2,12 @@
 
 Fire + water screensavers for your terminal. Built with iocraft.
 
+![demo](assets/demo.gif)
+
+![fire](assets/fire.png)
+![water](assets/water.png)
+![split](assets/split.png)
+
 ## Run
 
 ```bash

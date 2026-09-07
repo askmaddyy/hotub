@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <title>hotub demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        margin: 0; width: 1920px; height: 1080px;
+        overflow: hidden; background: #000;
+      }
+      body { font-family: "JetBrains Mono", monospace; }
+      #root {
+        position: relative; width: 1920px; height: 1080px; overflow: hidden;
+        background: #000; color: #f5e8d8;
+        display: flex; flex-direction: column;
+      }
+      .clip { position: absolute; inset: 0; pointer-events: none; }
+      #modebar {
+        height: 64px; flex-shrink: 0; position: relative;
+        display: flex; align-items: center; justify-content: center;
+        border-bottom: 2px solid #333;
+        font-size: 30px; font-weight: 700;
+      }
+      #screen { display: block; width: 1920px; height: 956px; background: #000; }
+      #footbar {
+        height: 60px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        border-top: 2px solid #333;
+        font-size: 26px; color: #aaa;
+      }
+      #modebar .clip { position: absolute; inset: 0; }
+      .modeline { height: 100%; display: flex; align-items: center; justify-content: center; }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-9hlr" id="root" data-composition-id="main" data-start="0" data-duration="12" data-width="1920" data-height="1080">
+      <div data-hf-id="hf-cxbz" id="modebar">
+        <section data-hf-id="hf-z7ec" id="scene-fire" class="clip" data-start="0" data-duration="4" data-track-index="1">
+          <div data-hf-id="hf-cndv" class="modeline"><span data-hf-id="hf-e1q8" style="color:#ff8c1a">HOTUB - FIRE</span></div>
+        </section>
+        <section data-hf-id="hf-uj4h" id="scene-water" class="clip" data-start="4" data-duration="4" data-track-index="1">
+          <div data-hf-id="hf-kpk3" class="modeline"><span data-hf-id="hf-zclf" style="color:#40c8ff">HOTUB - WATER</span></div>
+        </section>
+        <section data-hf-id="hf-fwzk" id="scene-split" class="clip" data-start="8" data-duration="4" data-track-index="1">
+          <div data-hf-id="hf-kb92" class="modeline"><span data-hf-id="hf-rmzj" style="color:#e08cff">HOTUB - FIRE + WATER</span></div>
+        </section>
+      </div>
+      <canvas data-hf-id="hf-cnyn" id="screen" width="1920" height="956"></canvas>
+      <div data-hf-id="hf-z27y" id="footbar">1 fire &#160;·&#160; 2 water &#160;·&#160; 3 both &#160;·&#160; space pause &#160;·&#160; q quit</div>
+    </div>
+
+    <script>
+      // ---- deterministic terminal sim (ported from the Rust app) ----
+      var COLS = 128, ROWS = 35, CW = 15, CH = 956 / 35;
+      var canvas = document.getElementById("screen");
+      var ctx = canvas.getContext("2d");
+      ctx.font = "700 24px 'JetBrains Mono', monospace";
+      ctx.textBaseline = "top";
+
+      function hash01(x, y, t) {
+        var h = ((x >>> 0) * 374761393 + ((y >>> 0) * 668265263 >>> 0) + ((t >>> 0) * 2246822519 >>> 0)) >>> 0;
+        h = (h ^ (h >>> 13)) >>> 0; h = (h * 1274126177) >>> 0; h = (h ^ (h >>> 16)) >>> 0;
+        return h / 4294967295;
+      }
+      function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+      function lerp(a, b, k) { return a + (b - a) * k; }
+
+      var FIRE_CHARS = [" ", ".", ":", ";", "!", "*", "+", "#", "%", "@", "#"];
+      function fireRgb(h) {
+        var r, g, b;
+        if (h < 0.2) { var k = h / 0.2; r = lerp(10, 180, k); g = lerp(0, 20, k); b = 0; }
+        else if (h < 0.45) { var k2 = (h - 0.2) / 0.25; r = lerp(180, 255, k2); g = lerp(20, 60, k2); b = 0; }
+        else if (h < 0.7) { var k3 = (h - 0.45) / 0.25; r = 255; g = lerp(60, 150, k3); b = 0; }
+        else if (h < 0.88) { var k4 = (h - 0.7) / 0.18; r = 255; g = lerp(150, 225, k4); b = lerp(0, 80, k4); }
+        else { var k5 = (h - 0.88) / 0.12; r = 255; g = lerp(225, 255, k5); b = lerp(80, 230, k5); }
+        return [r | 0, g | 0, b | 0];
+      }
+      function fireHeat(x, y, w, h, tick) {
+        var xf = x, yf = y, wf = w, hf = h;
+        var d = yf / hf;
+        var cx = Math.abs((xf - wf / 2) / Math.max(1, wf / 2));
+        var shape = Math.max(0.25, 1 - cx * cx * 0.55);
+        var fuel = 0.72 + 0.28 * Math.sin(xf * 0.32 + tick * 0.22) + 0.12 * Math.sin(xf * 0.11 - tick * 0.11);
+        var sway = Math.sin(yf * 0.28 + tick * 0.24 + Math.sin(xf * 0.22 + tick * 0.06) * 2.2);
+        var grain = hash01(x, (y / 2) | 0, (tick / 2) | 0) - 0.5;
+        var heat = (Math.pow(d, 1.35) * fuel + sway * 0.10 * d + grain * 0.22 * d) * shape;
+        var spark = hash01(x * 3 + 17, 0, (tick / 2) | 0);
+        if (spark > 0.93) {
+          var rise = Math.max(0, ((tick * 2 + (spark * 100) | 0) % (h * 2)));
+          var syy = h - 1 - (rise % Math.max(1, h));
+          if (Math.abs(y - syy) <= 1 && hash01(x, tick, 7) > 0.4) heat += 0.55;
+        }
+        return clamp01(heat * 1.25);
+      }
+
+      function waterRgb(depth, shimmer) {
+        var s = (shimmer * 40) | 0, r, g, b;
+        if (depth < 0.25) { r = 64 + s; g = 224; b = 255; }
+        else if (depth < 0.55) { r = 20; g = 130 + ((s / 2) | 0); b = 255; }
+        else if (depth < 0.8) { r = 10; g = 70 + ((s / 3) | 0); b = 190; }
+        else { r = 8; g = 30 + ((s / 4) | 0); b = 120; }
+        return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
+      }
+      function surfaceY(x, w, h, t) {
+        var base = h * 0.48;
+        return Math.round(base + Math.sin(x * 0.24 + t * 0.11) * 1.3
+          + Math.sin(x * 0.11 - t * 0.065) * 1.9 + Math.sin((x + t * 1.4) * 0.045) * 1.1
+          + Math.sin(w * 0.01));
+      }
+      function wrapTrack(v, period) { var p = Math.max(1, period); return ((v % p) + p) % p | 0; }
+      var FISH = [
+        { s: 1.6, d: 0.62, c: [255, 220, 60] }, { s: 1.05, d: 0.70, c: [255, 150, 50] },
+        { s: 2.1, d: 0.76, c: [255, 120, 200] }, { s: 0.8, d: 0.66, c: [120, 255, 170] },
+        { s: 1.35, d: 0.83, c: [150, 200, 255] }
+      ];
+      function css(c) { return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"; }
+
+      function drawCell(gx, gy, ch, c) {
+        if (ch === " ") return;
+        ctx.fillStyle = css(c);
+        ctx.fillText(ch, gx * CW + 1, gy * CH + 1);
+      }
+
+      function drawFire(ox, w, h, tick) {
+        for (var y = 0; y < h; y++) {
+          if (y === h - 2 || y === h - 1) {
+            var logs = y === h - 2 ? "__||___||__" : "|..||||..|||.|";
+            var pad = Math.max(0, ((w / 2) | 0) - (logs.length / 2 | 0));
+            ctx.fillStyle = "#b58900";
+            ctx.fillText(logs, (ox + pad) * CW + 1, y * CH + 1);
+            continue;
+          }
+          for (var x = 0; x < w; x++) {
+            var heat = fireHeat(x, y, w, h, tick);
+            if (heat < 0.03) continue;
+            var idx = Math.min(FIRE_CHARS.length - 1, Math.round(heat * (FIRE_CHARS.length - 1)));
+            drawCell(ox + x, y, FIRE_CHARS[idx], fireRgb(heat));
+          }
+        }
+      }
+
+      function drawWater(ox, w, h, tick, speed) {
+        var t = tick * speed;
+        var right = (((tick / 350) | 0) % 2) === 0;
+        var skyRows = Math.max(3, ((h * 38 / 100) | 0));
+        var sunX = w - 10, sunY = 1;
+        var cloudY = [1, 2, 3], cloudS = [0.55, 0.35, 0.75], cloudO = [0, 31, 63];
+        var birdY = [2, 4], birdO = [11, 47];
+        var boatCx = wrapTrack(t * 0.9, w + 16) - 8;
+        var boatSy = Math.max(0, Math.min(h - 1, surfaceY(Math.max(0, Math.min(w - 1, boatCx)), w, h, t)));
+        var crabX = wrapTrack(t * 0.6 + 13, w + 16) - 8;
+        var flap = (((tick / 8) | 0) % 2 === 0) ? "v" : "^";
+        var fishes = FISH.map(function (f, i) {
+          var p = wrapTrack(t * f.s + i * 23 + 5, w + 20) - 10;
+          return { x: right ? p : (w + 10 - p - 3), y: Math.round(h * f.d + Math.sin(t * 0.12 + i * 1.7) * 1.4), c: f.c };
+        });
+        var blob = [".", "-", "~", "~", "~", "~", "~", "-", "."];
+        for (var y = 0; y < h; y++) {
+          for (var x = 0; x < w; x++) {
+            var sy = Math.max(0, Math.min(h - 1, surfaceY(x, w, h, t)));
+            var done = false;
+            if (y < sy) {
+              if (y === boatSy - 2 && (x === boatCx || x === boatCx + 1)) { drawCell(ox + x, y, x === boatCx ? "|" : "/", [255, 255, 255]); continue; }
+              if (y === boatSy - 1 && x >= boatCx - 3 && x <= boatCx + 3) {
+                drawCell(ox + x, y, x === boatCx - 3 ? "\\" : (x === boatCx + 3 ? "/" : "_"), [160, 120, 20]); continue;
+              }
+              if (y < skyRows) {
+                if (y === sunY && x === sunX) { drawCell(ox + x, y, "*", [255, 220, 60]); continue; }
+                if (Math.abs(y - sunY) <= 1 && Math.abs(x - sunX) === 1) { drawCell(ox + x, y, ".", [160, 120, 20]); continue; }
+                for (var ci = 0; ci < 3 && !done; ci++) {
+                  if (y === cloudY[ci]) {
+                    var ccx = wrapTrack(t * cloudS[ci] + cloudO[ci], w + 20) - 10;
+                    var dx = x - ccx;
+                    if (dx >= -4 && dx <= 4) { drawCell(ox + x, y, blob[dx + 4], [255, 255, 255]); done = true; }
+                  }
+                }
+                if (done) continue;
+                for (var bi = 0; bi < 2 && !done; bi++) {
+                  if (y === birdY[bi]) {
+                    var bx = wrapTrack(t * 1.1 + birdO[bi], w + 12) - 6;
+                    if (x === bx || x === bx + 2) { drawCell(ox + x, y, flap, [200, 200, 200]); done = true; }
+                  }
+                }
+                if (done) continue;
+              }
+              var near = sy - y;
+              if (near <= 2 && hash01(x * 2, y * 3, (tick / 3) | 0) > 0.86) {
+                drawCell(ox + x, y, hash01(x, y, tick) > 0.5 ? "'" : ".", near === 1 ? [180, 240, 255] : [110, 190, 240]);
+              }
+            } else if (y === sy) {
+              var foam = hash01(x, (tick / 4) | 0, 99);
+              drawCell(ox + x, y, foam > 0.8 ? "*" : foam > 0.55 ? "=" : foam > 0.3 ? "~" : "-", [235, 250, 255]);
+            } else {
+              var hit = false;
+              for (var fi = 0; fi < fishes.length && !hit; fi++) {
+                var f = fishes[fi];
+                if (y === f.y && x >= f.x && x < f.x + 3) {
+                  var g = right ? [">", "<", ">"] : ["<", ">", "<"];
+                  drawCell(ox + x, y, g[x - f.x], f.c); hit = true;
+                }
+              }
+              if (hit) continue;
+              if (y === h - 1 && x >= crabX && x < crabX + 3) {
+                drawCell(ox + x, y, ["(", "c", ")"][x - crabX], [255, 80, 80]); continue;
+              }
+              var depth = Math.max(0, Math.min(1, (y - sy) / Math.max(1, h - sy)));
+              if (hash01(x * 5, y * 2, (tick / 5) | 0) > 0.986) { drawCell(ox + x, y, "o", [200, 240, 255]); continue; }
+              var sh = Math.sin(x * 0.55 + t * 0.35) * Math.sin(y * 0.42 - t * 0.22);
+              var col = waterRgb(depth, sh);
+              var chh;
+              if (depth < 0.18) chh = sh > 0.5 ? "=" : "~";
+              else if (sh > 0.72) chh = ".";
+              else if (sh > 0.35) chh = "~";
+              else if (sh > -0.2) chh = "-";
+              else chh = depth > 0.7 ? " " : "~";
+              drawCell(ox + x, y, chh, col);
+            }
+          }
+        }
+      }
+
+      function draw(tt) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, 1920, 956);
+        var tick = (tt * 20) | 0;
+        if (tt < 4) { drawFire(0, COLS, ROWS, tick); }
+        else if (tt < 8) { drawWater(0, COLS, ROWS, tick, 1); }
+        else {
+          var half = ((COLS - 3) / 2) | 0;
+          drawFire(0, half, ROWS, tick);
+          ctx.fillStyle = "#555";
+          for (var y = 0; y < ROWS; y++) ctx.fillText("|", (half + 1) * CW + 1, y * CH + 1);
+          drawWater(half + 3, COLS - half - 3, ROWS, tick, 1);
+        }
+      }
+
+      var tl = gsap.timeline({ paused: true });
+      tl.to({ t: 0 }, { t: 12, duration: 12, ease: "none", onUpdate: function () { draw(this.targets()[0].t); } }, 0);
+      window.__timelines["main"] = tl;
+      draw(0);
+    </script>
+  </body>
+</html>
